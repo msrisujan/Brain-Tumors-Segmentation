@@ -56,6 +56,8 @@ import logging
 import hydra
 from omegaconf import DictConfig
 
+import wandb
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -168,6 +170,10 @@ def train_epoch(model, loader, optimizer, loss_func, augment = True):
         optimizer.step()
         optimizer.zero_grad()
         run_loss.update(loss.item(), n = batch_data["image"].shape[0])
+
+        # Log training loss per batch
+        wandb.log({"train/batch_loss": loss.item()})
+
     torch.cuda.empty_cache()
     return run_loss.avg
 
@@ -203,6 +209,9 @@ def val(model, loader, acc_func, model_inferer = None,
             acc_func(y_pred = predictions, y = masks)
             acc, not_nans = acc_func.aggregate()
             run_acc.update(acc.cpu().numpy(), n = not_nans.cpu().numpy())
+    
+    # Log validation accuracy per epoch
+    wandb.log({"val/mean_dice": run_acc.avg})
     return run_acc.avg
 
 # Save trained results
@@ -273,6 +282,7 @@ def trainer(cfg,
     mean_dices = []
     epoch_losses = [] # training loss
     train_epochs = []
+    wandb.watch(model, log="all", log_freq=10)
     for epoch in range(start_epoch, max_epochs):
         print()
         epoch_time = time.time()
@@ -280,6 +290,7 @@ def trainer(cfg,
                                     loader = train_loader,
                                     optimizer = optimizer,
                                     loss_func = loss_func)
+        wandb.log({"train/epoch_loss": training_loss, "epoch": epoch})
         print(
             "Epoch  {}/{},".format(epoch + 1, max_epochs),
             "loss: {:.4f},".format(training_loss),
@@ -301,6 +312,13 @@ def trainer(cfg,
             dice_wt = val_acc[1]
             dice_et = val_acc[2]
             val_mean_acc = np.mean(val_acc)
+            wandb.log({
+                "val/dice_tc": dice_tc,
+                "val/dice_wt": dice_wt,
+                "val/dice_et": dice_et,
+                "val/mean_dice": val_mean_acc,
+                "epoch": epoch
+            })
             print(
                 " Validation: "
                 "dice_tc:", "{:.4f},".format(dice_tc),
@@ -626,4 +644,5 @@ def main(cfg: DictConfig):
         val_every=val_every)
         
 if __name__ == "__main__":
+    wandb.init(project="swinunet_brats_feb")
     main()
